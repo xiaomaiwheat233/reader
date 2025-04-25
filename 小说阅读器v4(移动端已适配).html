@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多功能本地阅读器</title>
+    <!-- 引入 PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <!-- 引入 Mammoth (docx 转 HTML) -->
+    <script src="https://unpkg.com/mammoth@1.4.8/mammoth.browser.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #f5f5f5;
+            --text-color: #333;
+            --primary-color: #4CAF50;
+            --container-bg: white;
+        }
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            margin: 0; padding: 20px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: all .3s;
+        }
+        .container {display: flex;align-items: flex-start;}
+        .control-panel { 
+            display: flex; 
+            gap: 15px; 
+            flex-wrap: wrap; 
+            margin-bottom: 20px; 
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 200;
+            background: var(--bg-color);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            padding: 16px 20px 12px 240px;
+        }
+        .custom-upload { background: var(--primary-color); color: #fff; padding: 12px 24px; border:none; border-radius:5px; cursor:pointer; }
+        button, select { padding:8px 16px; border:1px solid #ddd; border-radius:4px; background: var(--container-bg); color: var(--text-color); cursor:pointer; }
+        #fileInput { display:none; }
+        .reader-container {
+            margin-left: 240px;
+            overflow-y: auto;
+            max-height: none;
+            padding: 30px;
+            margin-top: 72px;
+        }
+        .toc {
+            position: fixed;
+            top: 80px;
+            left: 20px;
+            width: 200px;
+            max-height: calc(100vh - 100px);
+            overflow-y: auto;
+            background: var(--container-bg);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        .toc h3 { margin:0 0 10px; }
+        .toc ul { list-style:none; padding:0; max-height:200px; overflow:auto; }
+        .toc li { padding:5px 0; cursor:pointer; color: var(--primary-color); }
+        .parsed-controls {display: none;}
+        body.parsed .parsed-controls {display: flex;}
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .control-panel {
+                position: fixed !important;
+                top: 0; left: 0; right: 0;
+                z-index: 9999;
+                width: 100vw !important;
+                max-width: 100vw !important;
+                transform: scale(0.85);
+                transform-origin: top left;
+                background: var(--bg-color);
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                padding: 6px 2vw 6px 2vw !important;
+                margin: 0 !important;
+                gap: 6px !important;
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .custom-upload {
+                width: 80px;
+                min-width: 60px;
+                font-size: 0.98em;
+                height: 36px;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+                box-sizing: border-box;
+            }
+            button, select {
+                width: 70px;
+                min-width: 50px;
+                font-size: 0.98em;
+                height: 36px;
+                margin-bottom: 0;
+                box-sizing: border-box;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+            }
+            .toc-toggle-btn {
+                display: inline-block !important;
+                position: static !important;
+                margin: 0;
+                background: var(--primary-color);
+                color: #fff;
+                border: none;
+                border-radius: 4px;
+                font-size: 0.98em;
+                min-width: 60px;
+                height: 36px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                padding: 0;
+            }
+            .toc {
+                position: fixed !important;
+                top: 48px;
+                left: 0;
+                width: 80vw !important;
+                max-width: 80vw !important;
+                margin: 0 !important;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                background: var(--container-bg);
+                z-index: 9998;
+                border-radius: 0 0 8px 8px;
+                padding: 8px 2vw;
+                transition: transform 0.2s, opacity 0.2s;
+                transform: translateY(-110%) scale(0.95);
+                opacity: 0;
+                pointer-events: none;
+            }
+            .toc.toc-open {
+                transform: translateY(0) scale(1);
+                opacity: 1;
+                pointer-events: auto;
+            }
+            .reader-container {
+                margin-left: 0 !important;
+                margin-top: 120px !important;
+                padding: 10px 4px 60px 4px !important;
+                max-height: none;
+                width: 100%;
+            }
+        }
+        .theme-classic {
+            --bg-color: #f5f5f5;
+            --text-color: #333;
+            --primary-color: #4CAF50;
+            --container-bg: white;
+        }
+        .theme-dark {
+            --bg-color: #2d2d2d;
+            --text-color: #e0e0e0;
+            --primary-color: #2196F3;
+            --container-bg: #1a1a1a;
+        }
+        .theme-paper {
+            --bg-color: #f0e6d3;
+            --text-color: #5a4630;
+            --primary-color: #8b572a;
+            --container-bg: #fff9ec;
+        }
+        .theme-terminal {
+            --bg-color: #000;
+            --text-color: #0f0;
+            --primary-color: #0f0;
+            --container-bg: #001100;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body class="theme-classic">
+    <div class="container">
+        <!-- 固定顶部的控制条 -->
+        <div class="control-panel" id="initialControls">
+            <input type="file" id="fileInput" accept=".txt,.pdf,.docx">
+            <label for="fileInput" class="custom-upload">选择文件</label>
+            <select id="themeSelect" onchange="changeTheme(this.value)">
+                <option value="theme-classic">经典风格</option>
+                <option value="theme-dark">夜晚模式</option>
+                <option value="theme-paper">纸质书风格</option>
+                <option value="theme-terminal">终端风格</option>
+            </select>
+            <button onclick="adjustFontSize('increase')">A+</button>
+            <button onclick="adjustFontSize('decrease')">A-</button>
+            <button class="toc-toggle-btn" id="tocToggleBtn" style="display:none;">目录</button>
+        </div>
+        <div class="reader-container" id="reader">
+            <p style="text-align: center; color: #666;">请选择要阅读的文件</p>
+        </div>
+        <div class="toc" id="toc"></div>
+    </div>
+    <!-- 解析后的小浮动面板固定在右上角，只保留风格和字体缩放按钮 -->
+    <div class="control-panel parsed-controls" id="parsedControls" style="display:none;">
+        <!-- 解析后不再显示任何按钮 -->
+    </div>
+    <script>
+    // 不再动态调整 position，完全交给 CSS 控制
+    let contentParagraphs = [];
+    let chapters = [];
+    const reader = document.getElementById('reader');
+    const toc = document.getElementById('toc');
+    const tocToggleBtn = document.getElementById('tocToggleBtn');
+
+    // 目录折叠/展开逻辑
+    function updateTocToggleBtn() {
+        if (window.innerWidth <= 768) {
+            tocToggleBtn.style.display = 'block';
+            toc.classList.remove('toc-open');
+        } else {
+            tocToggleBtn.style.display = 'none';
+            toc.classList.add('toc-open');
+        }
+    }
+    tocToggleBtn.addEventListener('click', function() {
+        toc.classList.toggle('toc-open');
+    });
+    window.addEventListener('resize', updateTocToggleBtn);
+    window.addEventListener('DOMContentLoaded', updateTocToggleBtn);
+
+    document.getElementById('fileInput').addEventListener('change', async e => {
+        const file = e.target.files[0]; if (!file) return;
+        initReader();
+        try {
+            if (file.name.endsWith('.txt')) await loadText(file);
+            else if (file.name.endsWith('.pdf')) await loadPDF(file);
+            else if (file.name.endsWith('.docx')) await loadWord(file);
+            splitChapters();
+            renderChapters();
+            buildTOC();
+        } catch (err) {
+            reader.innerHTML = `<p style="color:red;">错误：${err.message}</p>`;
+        }
+        document.body.classList.add('parsed');
+        updateTocToggleBtn();
+    });
+
+    function initReader() {
+        reader.innerHTML = '';
+        contentParagraphs = [];
+        chapters = [];
+    }
+
+    async function loadText(file) {
+        const text = await file.text();
+        text.split('\n').forEach(line => {
+            if (line.trim()) contentParagraphs.push(line);
+        });
+    }
+
+    async function loadPDF(file) {
+        const data = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data }).promise;
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items.map(item => item.str).join('');
+            pageText.split('\n').forEach(line => {
+                if (line.trim()) contentParagraphs.push(line.trim());
+            });
+        }
+    }
+
+    async function loadWord(file) {
+        const result = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
+        const tmp = document.createElement('div');
+        tmp.innerHTML = result.value;
+        tmp.querySelectorAll('p, h1, h2, h3').forEach(el => {
+            const txt = el.textContent.trim();
+            if (txt) contentParagraphs.push(txt);
+        });
+    }
+
+    function splitChapters() {
+        const regex = /^\s*(第[一二三四五六七八九十百千万\d]+[章节回部卷篇集节部分]|Chapter\s*\d+|CHAPTER\s*\d+|PART\s*\d+|Part\s*\d+|SECTION\s*\d+|Section\s*\d+|序章|前言|引言|楔子)[\s　]*([\u4e00-\u9fa5]{0,10})?$/i;
+        const simpleNumLine = /^(\d{1,4}|[一二三四五六七八九十百千万]{1,4})$/;
+        const numTitleLine = /^(\d{1,3}|[一二三四五六七八九十百千万]{1,3})[\.\、．,，、\s]{1,2}[^\n：:，,、]{1,16}$/;
+
+        chapters = [];
+        contentParagraphs.forEach((para, idx) => {
+            const line = para.trim();
+            if (
+                (regex.test(line) && line.length <= 20) ||
+                simpleNumLine.test(line) ||
+                numTitleLine.test(line)
+            ) {
+                chapters.push({ title: line, start: idx });
+            }
+        });
+
+        if (chapters.length === 0 && contentParagraphs.length > 0) {
+            let start = 0;
+            for (let i = 0; i < contentParagraphs.length; i++) {
+                if (!contentParagraphs[i].trim()) {
+                    if (i > start) {
+                        chapters.push({ title: `正文${chapters.length + 1}`, start: start - 1, end: i });
+                    }
+                    start = i + 1;
+                }
+            }
+            if (start < contentParagraphs.length) {
+                chapters.push({ title: `正文${chapters.length + 1}`, start: start - 1, end: contentParagraphs.length });
+            }
+        }
+        if (chapters.length === 0 && contentParagraphs.length > 0) {
+            const chunk = 100;
+            for (let i = 0; i < contentParagraphs.length; i += chunk) {
+                chapters.push({
+                    title: `正文${chapters.length + 1}`,
+                    start: i - 1,
+                    end: Math.min(i + chunk, contentParagraphs.length)
+                });
+            }
+        }
+        chapters.forEach((ch, i) => {
+            ch.end = (typeof ch.end === 'number') ? ch.end : (i < chapters.length - 1 ? chapters[i + 1].start : contentParagraphs.length);
+        });
+    }
+
+    function renderChapters() {
+        reader.innerHTML = '';
+        chapters.forEach((ch, i) => {
+            const section = document.createElement('section');
+            section.id = `chapter-${i}`;
+            const title = document.createElement('h2');
+            title.textContent = ch.title;
+            section.appendChild(title);
+            for (let j = (ch.start + 1 || 0); j < ch.end; j++) {
+                const p = document.createElement('p');
+                p.textContent = contentParagraphs[j];
+                section.appendChild(p);
+            }
+            reader.appendChild(section);
+        });
+    }
+
+    function buildTOC() {
+        toc.innerHTML = '<h3>目录</h3><ul>' + chapters.map((ch, i) => {
+            return `<li onclick="scrollToChapter(${i},${window.innerWidth <= 768 ? 16 : 100})">${ch.title}</li>`;
+        }).join('') + '</ul>';
+    }
+
+    function scrollToChapter(idx, offset) {
+        const el = document.getElementById(`chapter-${idx}`);
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        window.scrollTo({
+            top: window.scrollY + rect.top - offset,
+            behavior: 'smooth'
+        });
+        // 移动端点击目录后自动收起目录
+        if (window.innerWidth <= 768) {
+            toc.classList.remove('toc-open');
+        }
+    }
+
+    function changeTheme(theme) {
+        document.body.className = document.body.className
+            .split(' ')
+            .filter(c => !c.startsWith('theme-'))
+            .concat(theme)
+            .join(' ')
+            .trim();
+        localStorage.setItem('readerTheme', theme);
+    }
+
+    function adjustFontSize(act) {
+        const cs = parseFloat(getComputedStyle(reader).fontSize);
+        reader.style.fontSize = (act === 'increase' ? Math.min(cs + 2, 24) : Math.max(cs - 2, 14)) + 'px';
+    }
+    </script>
+</body>
+</html>
